@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Raft Deep Dive</title>
+    <style>
+        :root {
+            --bg: #1a1b26;
+            --bg-surface: #24283b;
+            --bg-hover: #2f3549;
+            --text: #c0caf5;
+            --text-muted: #565f89;
+            --text-bright: #e0e6ff;
+            --accent: #7aa2f7;
+            --accent-dim: #3d59a1;
+            --border: #3b4261;
+            --code-bg: #1f2335;
+            --success: #9ece6a;
+            --warning: #e0af68;
+            --error: #f7768e;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.7;
+            font-size: 16px;
+        }
+
+        .container {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* Table of Contents */
+        nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 280px;
+            height: 100vh;
+            overflow-y: auto;
+            background: var(--bg-surface);
+            border-right: 1px solid var(--border);
+            padding: 1.5rem 1rem;
+            z-index: 100;
+        }
+
+        nav h2 {
+            color: var(--accent);
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        nav ul {
+            list-style: none;
+        }
+
+        nav ul li {
+            margin-bottom: 0.25rem;
+        }
+
+        nav ul li a {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.875rem;
+            display: block;
+            padding: 0.3rem 0.5rem;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+
+        nav ul li a:hover {
+            color: var(--text-bright);
+            background: var(--bg-hover);
+        }
+
+        nav ul li.section > a {
+            color: var(--text);
+            font-weight: 600;
+            margin-top: 0.75rem;
+        }
+
+        nav ul li.sub {
+            padding-left: 1rem;
+        }
+
+        /* Main Content */
+        main {
+            margin-left: 280px;
+            padding: 3rem 4rem;
+            max-width: 900px;
+            width: 100%;
+        }
+
+        h1 {
+            color: var(--text-bright);
+            font-size: 2.25rem;
+            margin-bottom: 0.5rem;
+            border-bottom: 2px solid var(--accent);
+            padding-bottom: 0.75rem;
+        }
+
+        h1 + p {
+            color: var(--text-muted);
+            margin-bottom: 2rem;
+        }
+
+        h2 {
+            color: var(--accent);
+            font-size: 1.5rem;
+            margin-top: 3rem;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border);
+        }
+
+        h3 {
+            color: var(--text-bright);
+            font-size: 1.2rem;
+            margin-top: 2rem;
+            margin-bottom: 0.75rem;
+        }
+
+        p {
+            margin-bottom: 1rem;
+        }
+
+        a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        /* Collapsible Sections */
+        details {
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            overflow: hidden;
+        }
+
+        summary {
+            padding: 1rem 1.25rem;
+            cursor: pointer;
+            font-weight: 600;
+            color: var(--text-bright);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            user-select: none;
+            transition: background 0.2s;
+        }
+
+        summary:hover {
+            background: var(--bg-hover);
+        }
+
+        summary::before {
+            content: '▶';
+            font-size: 0.7rem;
+            transition: transform 0.2s;
+            color: var(--accent);
+        }
+
+        details[open] summary::before {
+            transform: rotate(90deg);
+        }
+
+        details .content {
+            padding: 0 1.25rem 1.25rem;
+            border-top: 1px solid var(--border);
+        }
+
+        /* Code Blocks */
+        pre {
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 1rem 1.25rem;
+            overflow-x: auto;
+            margin: 1rem 0;
+            font-size: 0.875rem;
+            line-height: 1.5;
+        }
+
+        code {
+            font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace;
+            font-size: 0.875em;
+        }
+
+        :not(pre) > code {
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            padding: 0.15rem 0.4rem;
+            border-radius: 3px;
+            color: var(--warning);
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1rem 0;
+            font-size: 0.9rem;
+        }
+
+        th, td {
+            padding: 0.6rem 1rem;
+            text-align: left;
+            border: 1px solid var(--border);
+        }
+
+        th {
+            background: var(--bg-surface);
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        tr:nth-child(even) {
+            background: var(--bg-surface);
+        }
+
+        /* Lists */
+        ul, ol {
+            margin: 0.75rem 0;
+            padding-left: 1.5rem;
+        }
+
+        li {
+            margin-bottom: 0.4rem;
+        }
+
+        /* Mermaid */
+        .mermaid {
+            background: var(--bg-surface);
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin: 1.5rem 0;
+            text-align: center;
+            overflow-x: auto;
+        }
+
+        /* Strong */
+        strong {
+            color: var(--text-bright);
+        }
+
+        /* Responsive */
+        @media (max-width: 900px) {
+            nav {
+                display: none;
+            }
+            main {
+                margin-left: 0;
+                padding: 2rem 1.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <nav>
+            <h2>Table of Contents</h2>
+            <ul>
+                <li class="section"><a href="#architecture">Architecture</a></li>
+                <li class="section"><a href="#internals">Key Internals</a></li>
+                <li class="sub"><a href="#states">Server States &amp; Terms</a></li>
+                <li class="sub"><a href="#election">Leader Election</a></li>
+                <li class="sub"><a href="#replication">Log Replication</a></li>
+                <li class="sub"><a href="#commit">Commitment &amp; Applying</a></li>
+                <li class="sub"><a href="#safety">Safety Guarantees</a></li>
+                <li class="sub"><a href="#persistence">Persistence &amp; Recovery</a></li>
+                <li class="sub"><a href="#snapshots">Log Compaction &amp; Snapshots</a></li>
+                <li class="sub"><a href="#membership">Membership Changes</a></li>
+                <li class="section"><a href="#resources">Resources</a></li>
+            </ul>
+        </nav>
+
+        <main>
+            <h1>Raft Deep Dive</h1>
+            <p>Interactive reference for Raft internals — use when you're stuck implementing.</p>
+
+            <h2 id="architecture">Architecture</h2>
+            <p>A Raft cluster is a set of servers (typically 3 or 5) that cooperate to maintain a single replicated log. One server is the leader; the rest are followers. Clients send commands to the leader, which appends them to its log, replicates them to followers, and — once a majority has stored an entry — commits it and applies it to the local state machine. Every server contains the same components: a consensus module that runs the Raft protocol, a log, and a state machine that consumes committed entries.</p>
+
+            <div class="mermaid">
+graph TB
+    Client[Client] -->|command| L
+
+    subgraph Leader
+        LC[Consensus Module]
+        LL[Log]
+        LSM[State Machine]
+        LC --> LL --> LSM
+    end
+
+    subgraph "Follower 1"
+        F1C[Consensus Module]
+        F1L[Log]
+        F1SM[State Machine]
+        F1C --> F1L --> F1SM
+    end
+
+    subgraph "Follower 2"
+        F2C[Consensus Module]
+        F2L[Log]
+        F2SM[State Machine]
+        F2C --> F2L --> F2SM
+    end
+
+    L[Leader Consensus Module] -->|AppendEntries| F1C
+    L -->|AppendEntries| F2C
+    F1C -.->|ack| L
+    F2C -.->|ack| L
+            </div>
+
+            <h2 id="internals">Key Internals</h2>
+
+            <details open>
+                <summary>Server States &amp; Terms</summary>
+                <div class="content" id="states">
+                    <p>Each Raft server is always in one of three states:</p>
+                    <ul>
+                        <li><strong>Follower</strong>: Purely passive. It only responds to RequestVote and AppendEntries RPCs. If it receives no communication over an election timeout, it converts to a candidate.</li>
+                        <li><strong>Candidate</strong>: Used to elect a new leader. It votes for itself and solicits votes from peers.</li>
+                        <li><strong>Leader</strong>: Handles all client requests and drives log replication. There is at most one leader per term.</li>
+                    </ul>
+                    <p><strong>Terms</strong> are the algorithm's logical clock — monotonically increasing integers, each beginning with an election. Every RPC carries the sender's term. The universal rule: <strong>if a server sees a term greater than its own, it updates <code>currentTerm</code> and reverts to follower; if it sees a smaller term, it rejects the request.</strong> This single rule neutralizes stale leaders and out-of-date candidates automatically.</p>
+                    <div class="mermaid">
+stateDiagram-v2
+    [*] --> Follower
+    Follower --> Candidate: election timeout,\nno heartbeat
+    Candidate --> Candidate: split vote,\ntimeout, new election
+    Candidate --> Leader: majority of votes
+    Candidate --> Follower: discovers leader\nor higher term
+    Leader --> Follower: discovers higher term
+                    </div>
+                </div>
+            </details>
+
+            <details open>
+                <summary>Leader Election</summary>
+                <div class="content" id="election">
+                    <p>Followers expect periodic heartbeats (empty AppendEntries) from the leader. Each runs an <strong>election timeout</strong> chosen randomly from a range (e.g., 150–300 ms). When it fires without a heartbeat:</p>
+                    <ol>
+                        <li>The server increments <code>currentTerm</code> and becomes a <strong>candidate</strong>.</li>
+                        <li>It votes for itself and records <code>votedFor</code>.</li>
+                        <li>It resets its timer and sends <strong>RequestVote</strong> RPCs to all peers in parallel.</li>
+                    </ol>
+                    <p>Three outcomes are possible: it <strong>wins</strong> (majority of votes, becomes leader), it <strong>loses</strong> (receives AppendEntries from a valid leader, steps down), or a <strong>split vote</strong> occurs (nobody wins, a new randomized-timeout election follows). Randomized timeouts make split votes rare and self-correcting.</p>
+                    <p>A server grants its vote only if (a) it has not already voted this term, and (b) the candidate's log is <strong>at least as up-to-date</strong> as its own.</p>
+                    <div class="mermaid">
+sequenceDiagram
+    participant F1 as Follower A
+    participant C as Candidate B
+    participant F2 as Follower C
+    Note over C: election timeout fires,<br/>term++, vote for self
+    C->>F1: RequestVote(term, lastLogIndex, lastLogTerm)
+    C->>F2: RequestVote(term, lastLogIndex, lastLogTerm)
+    F1-->>C: voteGranted = true
+    F2-->>C: voteGranted = true
+    Note over C: majority reached, becomes Leader
+    C->>F1: AppendEntries (heartbeat)
+    C->>F2: AppendEntries (heartbeat)
+                    </div>
+                </div>
+            </details>
+
+            <details open>
+                <summary>Log Structure &amp; Log Replication</summary>
+                <div class="content" id="replication">
+                    <p>The log is an array of <strong>entries</strong>, each holding a state-machine command and the <strong>term</strong> in which the leader created it. Entries are identified by their <strong>index</strong>. Once elected, the leader:</p>
+                    <ol>
+                        <li>Appends a client command to its own log.</li>
+                        <li>Sends <strong>AppendEntries</strong> RPCs to all followers in parallel.</li>
+                        <li>Each RPC includes <code>prevLogIndex</code> and <code>prevLogTerm</code> — the entry immediately preceding the new ones.</li>
+                        <li>A follower accepts only if its log matches at <code>prevLogIndex</code>/<code>prevLogTerm</code>. Otherwise the leader decrements <code>nextIndex</code> and retries, walking back until logs agree, overwriting any conflicting suffix.</li>
+                    </ol>
+                    <p>This produces the <strong>Log Matching Property</strong>: if two entries in different logs share an index and term, they store the same command and all preceding entries are identical. The leader tracks <code>nextIndex[]</code> (next entry to send) and <code>matchIndex[]</code> (highest replicated) per follower.</p>
+                </div>
+            </details>
+
+            <details open>
+                <summary>Commitment &amp; Applying Entries</summary>
+                <div class="content" id="commit">
+                    <p>An entry is <strong>committed</strong> when the leader that created it has replicated it on a <strong>majority</strong> of servers. The leader finds the highest index <code>N</code> such that <code>matchIndex &gt;= N</code> on a majority <strong>and</strong> <code>log[N].term == currentTerm</code>, sets <code>commitIndex = N</code>, applies through it, and returns results to clients. It piggybacks <code>commitIndex</code> on subsequent AppendEntries so followers apply the same entries in the same order.</p>
+                    <p><strong>Critical subtlety:</strong> a leader may only directly commit entries <strong>from its own term</strong>. It must never conclude an entry from a <em>previous</em> term is committed just because it sits on a majority (Figure 8 in the paper). Older entries become committed indirectly, once a current-term entry commits on top of them.</p>
+                </div>
+            </details>
+
+            <details open>
+                <summary>Safety Guarantees</summary>
+                <div class="content" id="safety">
+                    <p>Raft guarantees five properties that together ensure state machines never diverge:</p>
+                    <table>
+                        <tr><th>Property</th><th>Guarantee</th></tr>
+                        <tr><td>Election Safety</td><td>At most one leader can be elected in a given term.</td></tr>
+                        <tr><td>Leader Append-Only</td><td>A leader never overwrites or deletes entries in its own log; it only appends.</td></tr>
+                        <tr><td>Log Matching</td><td>If two logs share an entry with the same index and term, they are identical up to that index.</td></tr>
+                        <tr><td>Leader Completeness</td><td>If an entry is committed in a term, it is present in the logs of all leaders of higher terms.</td></tr>
+                        <tr><td>State Machine Safety</td><td>If a server applied an entry at an index, no other server applies a different entry for that index.</td></tr>
+                    </table>
+                    <p>The keystone is the <strong>Election Restriction</strong>: a candidate cannot win unless its log is at least as up-to-date as a majority. "Up-to-date" compares last entries' terms; higher term wins, and on a tie the longer log wins. This ensures the winning leader already holds all committed entries.</p>
+                </div>
+            </details>
+
+            <details open>
+                <summary>Persistence &amp; Recovery</summary>
+                <div class="content" id="persistence">
+                    <p>Before responding to any RPC, a server must persist three pieces of state to <strong>stable storage</strong>:</p>
+                    <ul>
+                        <li><code>currentTerm</code> — the latest term seen.</li>
+                        <li><code>votedFor</code> — the candidate voted for this term (or null).</li>
+                        <li><code>log[]</code> — the log entries.</li>
+                    </ul>
+                    <p><code>commitIndex</code> and <code>lastApplied</code> are volatile and safely rebuilt after restart. Persisting term/vote prevents double-voting in a term; persisting the log prevents loss of committed data. On restart a server comes up as follower, loads persisted state, and the leader's consistency check reconciles any lagging log.</p>
+                </div>
+            </details>
+
+            <details open>
+                <summary>Log Compaction &amp; Snapshots</summary>
+                <div class="content" id="snapshots">
+                    <p>A log that grows forever wastes space and slows restarts. <strong>Snapshotting</strong> is Raft's compaction mechanism: each server independently writes a snapshot of its state machine up to some index, recording <code>lastIncludedIndex</code> and <code>lastIncludedTerm</code>, then discards entries through that index.</p>
+                    <p>When a follower lags so far that the leader has already discarded the entries it needs, the leader sends an <strong>InstallSnapshot</strong> RPC transferring the snapshot directly. The follower installs it, discards any conflicting prefix, and resumes normal replication.</p>
+                    <div class="mermaid">
+graph LR
+    subgraph "Before Compaction"
+        A1[idx1 x=1] --> A2[idx2 x=2] --> A3[idx3 y=9] --> A4[idx4 x=4]
+    end
+    subgraph "After Snapshot at idx3"
+        S[Snapshot<br/>lastIncludedIndex=3<br/>state: x=2,y=9] --> A4b[idx4 x=4]
+    end
+                    </div>
+                </div>
+            </details>
+
+            <details open>
+                <summary>Cluster Membership Changes</summary>
+                <div class="content" id="membership">
+                    <p>Changing the server set is dangerous: you cannot switch every server atomically, so two disjoint majorities could elect two leaders. Raft solves this with <strong>joint consensus</strong>, a two-phase approach:</p>
+                    <ol>
+                        <li>The leader appends a <strong>joint configuration</strong> entry (C-old,new). While active, agreement requires separate majorities from <strong>both</strong> the old and new configurations, making two independent leaders impossible.</li>
+                        <li>Once C-old,new commits, the leader appends the <strong>new configuration</strong> (C-new). Once C-new commits, the transition is complete.</li>
+                    </ol>
+                    <p>Configuration changes take effect the moment an entry is <strong>appended</strong> (not committed), and a server always uses the latest configuration in its log. Many production systems (etcd, HashiCorp Raft) instead use the simpler <strong>single-server change</strong> — adding/removing one server at a time — preserving majority overlap without joint consensus. <strong>Learner/non-voting</strong> members are often added first so a new server can catch up before counting toward quorum.</p>
+                </div>
+            </details>
+
+            <h2 id="resources">Resources</h2>
+
+            <details open>
+                <summary>Official Documentation</summary>
+                <div class="content">
+                    <ul>
+                        <li><a href="https://raft.github.io/">The Raft Consensus Algorithm (raft.github.io)</a> — Official site with paper, visualizations, and implementations</li>
+                        <li><a href="https://raft.github.io/raft.pdf">In Search of an Understandable Consensus Algorithm (Extended Version)</a> — The definitive paper by Ongaro &amp; Ousterhout (2014); Figure 2 is the complete spec</li>
+                        <li><a href="https://github.com/ongardie/dissertation">Consensus: Bridging Theory and Practice</a> — Ongaro's PhD dissertation covering membership, snapshots, client interaction</li>
+                    </ul>
+                </div>
+            </details>
+
+            <details open>
+                <summary>Articles</summary>
+                <div class="content">
+                    <ul>
+                        <li><a href="https://en.wikipedia.org/wiki/Raft_(algorithm)">Raft (algorithm) — Wikipedia</a> — Conceptual summary of states, terms, and safety</li>
+                        <li><a href="https://thesecretlivesofdata.com/raft/">The Secret Lives of Data — Raft</a> — Animated step-by-step walkthrough of election and replication</li>
+                        <li><a href="https://thesquareplanet.com/blog/students-guide-to-raft/">Students' Guide to Raft — Jon Gjengset</a> — Practical advice on subtle implementation bugs (2016)</li>
+                        <li><a href="https://developers.redhat.com/articles/2025/09/17/deep-dive-apache-kafkas-kraft-protocol">A deep dive into Apache Kafka's KRaft protocol</a> — Raft applied in Kafka (Red Hat, 2025)</li>
+                    </ul>
+                </div>
+            </details>
+
+            <details open>
+                <summary>Videos</summary>
+                <div class="content">
+                    <ul>
+                        <li><a href="https://www.youtube.com/watch?v=vYp4LYbnnW8">Designing for Understandability: The Raft Consensus Algorithm — John Ousterhout</a> — The co-author explains the algorithm and its design rationale</li>
+                        <li><a href="https://www.youtube.com/watch?v=64Zp3tzNbpE">Raft Lecture (Diego Ongaro, MIT 6.824)</a> — Author-led guest lecture on the protocol</li>
+                    </ul>
+                </div>
+            </details>
+
+            <details open>
+                <summary>Source Code</summary>
+                <div class="content">
+                    <ul>
+                        <li><a href="https://github.com/etcd-io/raft">etcd-io/raft</a> — The Raft library behind etcd/Kubernetes; canonical Go implementation</li>
+                        <li><a href="https://github.com/hashicorp/raft">hashicorp/raft</a> — Consul's Raft library with clear single-server membership docs</li>
+                        <li><a href="https://github.com/tikv/raft-rs">tikv/raft-rs</a> — Rust port of the etcd Raft implementation used by TiKV</li>
+                    </ul>
+                </div>
+            </details>
+        </main>
+    </div>
+
+    <script>
+        // Mermaid.js v10.9.0
+        // Loading from CDN as fallback since embedding the full library (2MB+) would be impractical
+        // For true offline use, download mermaid.min.js and replace this script tag
+        (function() {
+            var script = document.createElement('script');
+            script.src = 'https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js';
+            script.onload = function() {
+                mermaid.initialize({
+                    startOnLoad: true,
+                    theme: 'dark',
+                    themeVariables: {
+                        darkMode: true,
+                        background: '#1a1b26',
+                        primaryColor: '#3d59a1',
+                        primaryTextColor: '#c0caf5',
+                        primaryBorderColor: '#7aa2f7',
+                        lineColor: '#565f89',
+                        secondaryColor: '#24283b',
+                        tertiaryColor: '#1f2335',
+                        noteTextColor: '#c0caf5',
+                        noteBkgColor: '#24283b'
+                    }
+                });
+            };
+            script.onerror = function() {
+                // Fallback: show raw diagram text if mermaid fails to load
+                document.querySelectorAll('.mermaid').forEach(function(el) {
+                    el.style.textAlign = 'left';
+                    el.style.whiteSpace = 'pre';
+                    el.style.fontFamily = 'monospace';
+                    el.style.fontSize = '0.8rem';
+                });
+            };
+            document.head.appendChild(script);
+        })();
+    </script>
+</body>
+</html>
