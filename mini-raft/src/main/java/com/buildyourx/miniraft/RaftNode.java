@@ -66,6 +66,19 @@ public interface RaftNode {
      */
     RpcMessage.RequestVoteReply handleRequestVote(RpcMessage.RequestVoteRequest request);
 
+    /**
+     * Handle an incoming RequestVoteReply RPC response from a peer.
+     *
+     * <p>Process the peer's voting decision: (1) if the reply's term is higher
+     * than this node's current term, step down to a follower immediately, and
+     * (2) if the vote was granted and this node is still a candidate, increment
+     * the vote count and transition to leader if a majority quorum is reached.
+     *
+     * @param reply the vote reply received from a peer node
+     * @param from the node ID of the peer that sent the reply
+     */
+    void handleRequestVoteReply(RpcMessage.RequestVoteReply reply, String from);
+
     // --- Phase 2: Log Replication ---
 
     /**
@@ -165,4 +178,6 @@ public interface RaftNode {
      * @return the peer ids
      */
     Set<String> peers();
+
+    void pause();
 }
